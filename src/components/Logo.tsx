@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-export function Logo({ href = "/", compact = false }: { href?: string; compact?: boolean }) {
+export function Logo({ href = "/dashboard", compact = false }: { href?: string; compact?: boolean }) {
   return (
     <Link href={href} className="group flex items-center gap-2.5" aria-label="ScriptFlow AI — beranda">
       <span className="relative grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-amber-300 via-amber-400 to-orange-500 shadow-[0_6px_24px_-6px_rgba(251,191,36,0.7)] transition-transform duration-300 group-hover:rotate-[-6deg] group-hover:scale-105">

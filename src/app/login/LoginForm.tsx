@@ -94,7 +94,7 @@ export function LoginForm({ initialMode = "login" }: { initialMode?: "login" | "
 
     setSuccessMessage(`Selamat datang kembali, ${user?.name || "Produser"}! Mengarahkan ke dashboard…`);
     setTimeout(() => {
-      router.push("/");
+      router.push("/dashboard");
     }, 700);
   };
 
@@ -132,7 +132,7 @@ export function LoginForm({ initialMode = "login" }: { initialMode?: "login" | "
 
     setSuccessMessage(`Akun ${user?.name || regName} berhasil didaftarkan! Mengarahkan ke dashboard…`);
     setTimeout(() => {
-      router.push("/");
+      router.push("/dashboard");
     }, 700);
   };
 

@@ -336,8 +336,8 @@ function WorkspaceInner({ project }: { project: Project }) {
 
       {/* HEADER */}
       <header className="flex h-14 shrink-0 items-center gap-3 border-b border-white/5 bg-[#05070d]/80 px-4 backdrop-blur-xl">
-        <Logo href="/" compact />
-        <Link href="/" className="hidden items-center gap-1 text-sm text-slate-500 hover:text-white sm:flex">
+        <Logo href="/dashboard" compact />
+        <Link href="/dashboard" className="hidden items-center gap-1 text-sm text-slate-500 hover:text-white sm:flex">
           Dashboard <span className="text-slate-700">/</span>
         </Link>
         <input
