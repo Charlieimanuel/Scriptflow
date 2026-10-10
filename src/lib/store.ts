@@ -4,15 +4,17 @@ import { useSyncExternalStore } from "react";
 import { DEMO_SCRIPT } from "./demo-script";
 import type { Project, ProjectFormat } from "./types";
 import { createClient, isSupabaseConfigured } from "./supabase/client";
+import { getActiveUserId } from "./auth";
 
 /**
- * Penyimpanan proyek: Hybrid Local-First & Supabase Cloud PostgreSQL.
- * Membaca & menulis langsung ke tabel `public.projects` jika tersambung dengan Supabase,
- * dan menggunakan localStorage sebagai cache instan 0ms offline/fallback.
+ * Penyimpanan proyek: Terisolasi 100% per akun pengguna (Per-User Isolation).
+ * - Di Supabase: difilter strictly berdasarkan `owner_id = user.id` & dilindungi RLS.
+ * - Di LocalStorage: dicache per user ID (`scriptflow.projects.v1.${userId}`).
+ * Data akun A TIDAK AKAN PERNAH muncul atau bocor ke akun B.
  */
-const KEY = "scriptflow.projects.v1";
 
 let cache: Project[] | null = null;
+let currentCachedUserId: string | null = null;
 const listeners = new Set<() => void>();
 let isSupabaseInitialized = false;
 
@@ -43,33 +45,66 @@ function seed(): Project[] {
   ];
 }
 
-function read(): Project[] {
+function getStorageKey(userId?: string | null): string {
+  const activeId = userId !== undefined ? userId : getActiveUserId();
+  if (activeId) return `scriptflow.projects.v1.${activeId}`;
+  return "scriptflow.projects.v1.guest";
+}
+
+function read(userId?: string | null): Project[] {
+  const activeId = userId !== undefined ? userId : getActiveUserId();
+  const key = getStorageKey(activeId);
+
+  // Jika user berganti, invalidasi memori cache seketika
+  if (currentCachedUserId !== activeId) {
+    cache = null;
+    currentCachedUserId = activeId;
+  }
+
   if (cache) return cache;
+
   try {
-    const raw = localStorage.getItem(KEY);
-    cache = raw ? (JSON.parse(raw) as Project[]) : seed();
-    if (!raw) localStorage.setItem(KEY, JSON.stringify(cache));
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      cache = JSON.parse(raw) as Project[];
+    } else {
+      // Jika pengguna sudah login, mulai dengan list kosong [] agar tidak melihat proyek orang lain
+      // Jika tamu belum login sama sekali, tampilkan seed demo
+      cache = activeId ? [] : seed();
+      localStorage.setItem(key, JSON.stringify(cache));
+    }
   } catch {
-    cache = seed();
+    cache = activeId ? [] : seed();
   }
   return cache;
 }
 
-function write(next: Project[]) {
+function write(next: Project[], userId?: string | null) {
+  const activeId = userId !== undefined ? userId : getActiveUserId();
+  const key = getStorageKey(activeId);
   cache = next;
+  currentCachedUserId = activeId;
+
   try {
-    localStorage.setItem(KEY, JSON.stringify(next));
+    localStorage.setItem(key, JSON.stringify(next));
   } catch {
-    /* kuota penuh / mode privat: tetap jalan di memori */
+    /* kuota penuh / mode privat */
   }
   listeners.forEach((l) => l());
 }
 
 /**
- * Sinkronisasi data proyek dari tabel `projects` di Supabase.
+ * Sinkronisasi data proyek KHUSUS untuk akun yang sedang login.
  */
 async function syncFromSupabase() {
-  if (!isSupabaseConfigured() || typeof window === "undefined") return;
+  if (typeof window === "undefined") return;
+
+  if (!isSupabaseConfigured()) {
+    const activeId = getActiveUserId();
+    read(activeId);
+    listeners.forEach((l) => l());
+    return;
+  }
 
   try {
     const supabase = createClient();
@@ -77,17 +112,27 @@ async function syncFromSupabase() {
       data: { user },
     } = await supabase.auth.getUser();
 
-    if (!user) return;
+    if (!user) {
+      // Jika pengguna belum login, kosongkan cache dan bersihkan tampilan
+      cache = [];
+      currentCachedUserId = null;
+      write([], "guest");
+      return;
+    }
 
+    const userId = user.id;
+
+    // Ambil HANYA proyek yang dimiliki oleh user ini
     const { data, error } = await supabase
       .from("projects")
       .select("*")
-      .eq("owner_id", user.id)
+      .eq("owner_id", userId)
       .order("updated_at", { ascending: false });
 
     if (error) {
-      // Jika tabel belum dieksekusi di Supabase, fallback aman ke localStorage
-      console.warn("Tabel projects di Supabase belum dibuat atau ada kendala:", error.message);
+      console.warn("Kueri tabel projects Supabase belum aktif atau ada kendala:", error.message);
+      read(userId);
+      listeners.forEach((l) => l());
       return;
     }
 
@@ -103,49 +148,8 @@ async function syncFromSupabase() {
         updatedAt: row.updated_at || new Date().toISOString(),
       }));
 
-      // Migrasikan proyek lokal yang belum ada di Supabase ke cloud
-      const localList = read();
-      const remoteIds = new Set(remoteProjects.map((p) => p.id));
-      const unmergedLocals = localList.filter((p) => p.id !== "demo-pulang" && !remoteIds.has(p.id));
-
-      if (unmergedLocals.length > 0) {
-        for (const localP of unmergedLocals) {
-          await supabase.from("projects").upsert({
-            id: localP.id,
-            owner_id: user.id,
-            title: localP.title,
-            format: localP.format,
-            script_text: localP.scriptText,
-            contingency_pct: localP.contingencyPct,
-            overrides: localP.overrides || {},
-            created_at: localP.createdAt,
-            updated_at: localP.updatedAt,
-          });
-        }
-
-        const { data: updatedData } = await supabase
-          .from("projects")
-          .select("*")
-          .eq("owner_id", user.id)
-          .order("updated_at", { ascending: false });
-
-        if (Array.isArray(updatedData)) {
-          const merged: Project[] = updatedData.map((row: any) => ({
-            id: row.id,
-            title: row.title || "Proyek tanpa judul",
-            format: row.format || "film_pendek",
-            scriptText: row.script_text || "",
-            contingencyPct: Number(row.contingency_pct ?? 10),
-            overrides: row.overrides || {},
-            createdAt: row.created_at || new Date().toISOString(),
-            updatedAt: row.updated_at || new Date().toISOString(),
-          }));
-          write(merged);
-          return;
-        }
-      }
-
-      write(remoteProjects);
+      // Simpan strictly untuk user ini
+      write(remoteProjects, userId);
     }
   } catch (err) {
     console.warn("Gagal sinkronisasi dari Supabase:", err);
@@ -156,23 +160,27 @@ function initSupabaseListener() {
   if (isSupabaseInitialized || typeof window === "undefined" || !isSupabaseConfigured()) return;
   isSupabaseInitialized = true;
 
-  // Sinkronisasi data saat inisialisasi
   syncFromSupabase();
 
   try {
     const supabase = createClient();
 
-    // Dengarkan event login / logout
+    // Dengarkan event perubahan user / login / logout
     supabase.auth.onAuthStateChange((event) => {
-      if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
+      // Selalu kosongkan cache memori saat auth berganti
+      cache = null;
+      currentCachedUserId = null;
+
+      if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "USER_UPDATED") {
         syncFromSupabase();
       } else if (event === "SIGNED_OUT") {
-        cache = seed();
-        write(cache);
+        cache = [];
+        currentCachedUserId = null;
+        write([], "guest");
       }
     });
 
-    // Dengarkan perubahan realtime di tabel `projects`
+    // Realtime Postgres Changes
     supabase
       .channel("public-projects-channel")
       .on(
@@ -184,7 +192,7 @@ function initSupabaseListener() {
       )
       .subscribe();
   } catch {
-    // Abaikan jika realtime listener tidak dapat terhubung
+    // Abaikan error realtime
   }
 }
 
@@ -193,7 +201,8 @@ function subscribe(listener: () => void) {
   initSupabaseListener();
 
   const onStorage = (e: StorageEvent) => {
-    if (e.key === KEY) {
+    const currentKey = getStorageKey();
+    if (e.key === currentKey) {
       cache = null;
       listener();
     }
@@ -209,16 +218,17 @@ const serverSnapshot = () => null;
 
 /** `null` selama render server / hidrasi, array setelah di client. */
 export function useProjects(): Project[] | null {
-  return useSyncExternalStore(subscribe, read, serverSnapshot);
+  return useSyncExternalStore(subscribe, () => read(), serverSnapshot);
 }
 
 export function useProject(id: string): Project | null | undefined {
   const list = useProjects();
-  if (list === null) return undefined; // masih memuat
+  if (list === null) return undefined;
   return list.find((p) => p.id === id) ?? null;
 }
 
 export function createProject(title: string, format: ProjectFormat, scriptText = ""): Project {
+  const activeUserId = getActiveUserId();
   const now = new Date().toISOString();
   const p: Project = {
     id: newId(),
@@ -230,9 +240,11 @@ export function createProject(title: string, format: ProjectFormat, scriptText =
     createdAt: now,
     updatedAt: now,
   };
-  write([p, ...read()]);
 
-  // Simpan ke Supabase jika terhubung
+  const currentList = read(activeUserId);
+  write([p, ...currentList], activeUserId);
+
+  // Simpan ke Supabase untuk user aktif
   if (typeof window !== "undefined" && isSupabaseConfigured()) {
     (async () => {
       try {
@@ -264,13 +276,14 @@ export function createProject(title: string, format: ProjectFormat, scriptText =
 }
 
 export function updateProject(id: string, patch: Partial<Omit<Project, "id">>) {
-  write(
-    read().map((p) =>
-      p.id === id ? { ...p, ...patch, updatedAt: new Date().toISOString() } : p
-    )
-  );
+  const activeUserId = getActiveUserId();
+  const currentList = read(activeUserId);
 
-  // Perbarui di Supabase jika terhubung
+  const updatedList = currentList.map((p) =>
+    p.id === id ? { ...p, ...patch, updatedAt: new Date().toISOString() } : p
+  );
+  write(updatedList, activeUserId);
+
   if (typeof window !== "undefined" && isSupabaseConfigured() && id !== "demo-pulang") {
     (async () => {
       try {
@@ -299,9 +312,10 @@ export function updateProject(id: string, patch: Partial<Omit<Project, "id">>) {
 }
 
 export function deleteProject(id: string) {
-  write(read().filter((p) => p.id !== id));
+  const activeUserId = getActiveUserId();
+  const currentList = read(activeUserId);
+  write(currentList.filter((p) => p.id !== id), activeUserId);
 
-  // Hapus di Supabase jika terhubung
   if (typeof window !== "undefined" && isSupabaseConfigured() && id !== "demo-pulang") {
     (async () => {
       try {

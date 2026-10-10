@@ -48,6 +48,12 @@ function readAuth(): AuthUser | null {
   return cachedUser;
 }
 
+export function getActiveUserId(): string | null {
+  if (typeof window === "undefined") return null;
+  const user = readAuth();
+  return user?.id || null;
+}
+
 function writeAuth(user: AuthUser | null) {
   cachedUser = user;
   try {
@@ -271,4 +277,10 @@ export async function logout() {
     }
   }
   writeAuth(null);
+  if (typeof window !== "undefined") {
+    try {
+      localStorage.removeItem("scriptflow.projects.v1");
+    } catch {}
+    window.location.href = "/login";
+  }
 }

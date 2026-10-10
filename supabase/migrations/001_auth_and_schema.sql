@@ -190,3 +190,12 @@ alter table public.price_master enable row level security;
 create policy "Master harga dapat dibaca oleh pengguna login"
   on public.price_master for select
   using (auth.role() = 'authenticated');
+
+-- 9. HAK AKSES PERMISSIONS (AUTHENTICATED)
+grant all on table public.profiles to authenticated;
+grant all on table public.projects to authenticated;
+grant all on table public.scenes to authenticated;
+grant all on table public.scene_elements to authenticated;
+grant all on table public.shooting_days to authenticated;
+grant all on table public.price_master to authenticated;
+grant usage, select on all sequences in schema public to authenticated;
