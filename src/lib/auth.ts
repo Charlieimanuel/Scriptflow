@@ -227,6 +227,7 @@ export async function signUpWithEmailSupabase(name: string, email: string, passw
 
 export function loginWithGoogle(email = "arya.producer@gmail.com", name = "Arya Producer"): AuthUser {
   const user: AuthUser = {
+    id: "local-user-" + email.toLowerCase().replace(/[^a-z0-9]/g, "-"),
     name,
     email,
     role: "Line Producer",
@@ -241,6 +242,7 @@ export function loginWithEmail(email: string): AuthUser {
   const namePart = email.split("@")[0] || "Produser";
   const formattedName = namePart.charAt(0).toUpperCase() + namePart.slice(1);
   const user: AuthUser = {
+    id: "local-user-" + email.toLowerCase().replace(/[^a-z0-9]/g, "-"),
     name: formattedName,
     email: email.trim(),
     role: "Line Producer",
@@ -257,6 +259,7 @@ export function registerWithGoogle(email = "arya.producer@gmail.com", name = "Ar
 
 export function registerWithEmail(name: string, email: string): AuthUser {
   const user: AuthUser = {
+    id: "local-user-" + email.toLowerCase().replace(/[^a-z0-9]/g, "-"),
     name: name.trim() || "Kreator Film",
     email: email.trim(),
     role: "Produser / Penulis",

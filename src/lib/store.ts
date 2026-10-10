@@ -1,7 +1,6 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
-import { DEMO_SCRIPT } from "./demo-script";
 import type { Project, ProjectFormat } from "./types";
 import { createClient, isSupabaseConfigured } from "./supabase/client";
 import { getActiveUserId } from "./auth";
@@ -30,19 +29,7 @@ const newId = () => {
 };
 
 function seed(): Project[] {
-  const now = new Date().toISOString();
-  return [
-    {
-      id: "demo-pulang",
-      title: "Pulang — Film Pendek",
-      format: "film_pendek",
-      scriptText: DEMO_SCRIPT,
-      contingencyPct: 10,
-      overrides: {},
-      createdAt: now,
-      updatedAt: now,
-    },
-  ];
+  return [];
 }
 
 function getStorageKey(userId?: string | null): string {
@@ -66,15 +53,15 @@ function read(userId?: string | null): Project[] {
   try {
     const raw = localStorage.getItem(key);
     if (raw) {
-      cache = JSON.parse(raw) as Project[];
+      const parsed = JSON.parse(raw) as Project[];
+      // Saring agar proyek demo lama tidak pernah muncul ke akun baru
+      cache = Array.isArray(parsed) ? parsed.filter((p) => p.id !== "demo-pulang") : [];
     } else {
-      // Jika pengguna sudah login, mulai dengan list kosong [] agar tidak melihat proyek orang lain
-      // Jika tamu belum login sama sekali, tampilkan seed demo
-      cache = activeId ? [] : seed();
+      cache = [];
       localStorage.setItem(key, JSON.stringify(cache));
     }
   } catch {
-    cache = activeId ? [] : seed();
+    cache = [];
   }
   return cache;
 }
